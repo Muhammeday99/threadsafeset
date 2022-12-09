@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <vector>
 #include <iostream>
+#include <functional>
+#include <mutex>
+#include <condition_variable>
 
 template <class T>
 class ThreadSafeSet{
@@ -12,8 +15,11 @@ class ThreadSafeSet{
     ~ThreadSafeSet();
 
     bool insert(const T &element);
+    bool insert(T &&element);
     bool remove(const T &element);
     bool find(const T &element);
+    void iterate(std::function<void(const T&)>);
+    
     inline T get(int index){return this->container[index];};
 
     template <class U>
@@ -24,6 +30,8 @@ class ThreadSafeSet{
     int size;
     int index;
     bool exists(const T &element);
+    std::mutex m_mutex;
+    std::condition_variable m_localCV;
 };
 
 template <class T>
@@ -47,6 +55,7 @@ ThreadSafeSet<T>::~ThreadSafeSet()
 template <class T>
 bool ThreadSafeSet<T>::insert(const T &element)
 {
+  std::lock_guard<std::mutex> lock(m_mutex);
   if(size == 0){
     this->container.push_back(element);
     size++;
@@ -54,6 +63,7 @@ bool ThreadSafeSet<T>::insert(const T &element)
   }
   if (find(element))
   {
+    m_localCV.notify_one();
     return false;
   }
   size++;
@@ -74,13 +84,50 @@ bool ThreadSafeSet<T>::insert(const T &element)
   }
 
   this->container = temp;
+  m_localCV.notify_one();
+  return true;
+}
+
+template <class T>
+bool ThreadSafeSet<T>::insert(T &&element){
+  std::lock_guard<std::mutex> lock(m_mutex);
+  if(size == 0){
+    this->container.push_back(std::move(element));
+    size++;
+    return true;
+  }
+  if (find(element))
+  {
+    m_localCV.notify_one();
+    return false;
+  }
+  size++;
+  std::vector<T> temp;
+  int j=0;
+  for (size_t i = 0; i < size; i++)
+  {
+    
+    if (i == index)
+    {
+      temp.push_back(std::move(element));
+    }
+    else
+    {
+      temp.push_back(this->container[j]);
+      j++;
+    }
+  }
+
+  this->container = temp;
+  m_localCV.notify_one();
   return true;
 }
 
 template <class T>
 bool ThreadSafeSet<T>::remove(const T &element)
 {
-  
+  std::unique_lock<std::mutex> lock(m_mutex);
+  m_localCV.wait(lock);
   if (find(element))
   {
     std::vector<T> temp;
@@ -97,8 +144,10 @@ bool ThreadSafeSet<T>::remove(const T &element)
     }
     this->container = temp;
     size--;
+    lock.unlock();
     return true;
   }
+  lock.unlock();
   return false;
 }
 
@@ -138,6 +187,16 @@ bool ThreadSafeSet<T>::find(const T &element)
 
   return false;
 }
+
+template <class T>
+void ThreadSafeSet<T>::iterate(std::function<void(const T&)> func){
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_localCV.wait(lock);
+    for(auto e : container){
+      func(e);
+    }
+    lock.unlock();
+};
 
 template <class U>
 std::ostream &operator<<(std::ostream &os, const ThreadSafeSet<U> &set)
