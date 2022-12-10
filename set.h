@@ -21,6 +21,7 @@ class ThreadSafeSet{
     void iterate(std::function<void(const T&)>);
     
     inline T get(int index){return this->container[index];};
+    inline int getSize(){return size;};
 
     template <class U>
     friend std::ostream &operator<<(std::ostream &os, const ThreadSafeSet<U> &set);
@@ -63,7 +64,6 @@ bool ThreadSafeSet<T>::insert(const T &element)
   }
   if (find(element))
   {
-    m_localCV.notify_one();
     return false;
   }
   size++;
@@ -84,7 +84,6 @@ bool ThreadSafeSet<T>::insert(const T &element)
   }
 
   this->container = temp;
-  m_localCV.notify_one();
   return true;
 }
 
@@ -98,7 +97,6 @@ bool ThreadSafeSet<T>::insert(T &&element){
   }
   if (find(element))
   {
-    m_localCV.notify_one();
     return false;
   }
   size++;
@@ -119,15 +117,13 @@ bool ThreadSafeSet<T>::insert(T &&element){
   }
 
   this->container = temp;
-  m_localCV.notify_one();
   return true;
 }
 
 template <class T>
 bool ThreadSafeSet<T>::remove(const T &element)
 {
-  std::unique_lock<std::mutex> lock(m_mutex);
-  m_localCV.wait(lock);
+  std::lock_guard<std::mutex> lock(m_mutex);
   if (find(element))
   {
     std::vector<T> temp;
@@ -144,16 +140,17 @@ bool ThreadSafeSet<T>::remove(const T &element)
     }
     this->container = temp;
     size--;
-    lock.unlock();
     return true;
   }
-  lock.unlock();
   return false;
 }
 
 template <class T>
 bool ThreadSafeSet<T>::find(const T &element)
 {
+  if(size == 0){
+    return false;
+  }
   int l = 0;
   int r = this->size - 1;
   int mid;
@@ -190,12 +187,10 @@ bool ThreadSafeSet<T>::find(const T &element)
 
 template <class T>
 void ThreadSafeSet<T>::iterate(std::function<void(const T&)> func){
-    std::unique_lock<std::mutex> lock(m_mutex);
-    m_localCV.wait(lock);
+    std::lock_guard<std::mutex> lock(m_mutex);
     for(auto e : container){
       func(e);
     }
-    lock.unlock();
 };
 
 template <class U>

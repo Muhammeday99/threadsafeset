@@ -1,2 +1,2 @@
-all:
-	g++ main.cpp set.h -o output -std=c++11 -pthread
+single:
+	g++ singleRW.cpp set.h -o output -std=c++11 -pthread
